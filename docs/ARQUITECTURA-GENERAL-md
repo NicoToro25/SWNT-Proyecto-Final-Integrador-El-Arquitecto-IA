@@ -1,0 +1,346 @@
+# EcoFlow — Arquitectura de Software
+
+## 1. Visión General del Sistema
+
+EcoFlow es una plataforma interna B2B para gestión integral del ciclo de vida de proyectos de instalación solar. La arquitectura sigue el patrón **Feature-Sliced Design (FSD)** adaptado a React + Supabase, con énfasis en separación de responsabilidades, tipado fuerte end-to-end y escalabilidad horizontal por dominio de negocio.
+
+**Principios rectores:**
+- *Cohesión alta, acoplamiento bajo* entre módulos de dominio
+- *Single Source of Truth* a nivel de tipos (generados desde Supabase)
+- *Colocation* de lógica relacionada (hook + service + types juntos por feature)
+- *Fail-fast* mediante validación de esquemas en boundaries de datos
+
+---
+
+## 2. Arquitectura General del Sistema
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                    CLIENTE (Browser)                    │
+│  ┌──────────┐  ┌──────────┐  ┌──────────────────────┐  │
+│  │  React   │  │ React    │  │   TanStack Query     │  │
+│  │  Router  │  │ Context  │  │   (Server State)     │  │
+│  └──────────┘  └──────────┘  └──────────────────────┘  │
+│         ↕              ↕              ↕                  │
+│  ┌─────────────────────────────────────────────────┐    │
+│  │              Services Layer (SDK wrappers)       │    │
+│  └─────────────────────────────────────────────────┘    │
+└───────────────────────────┬─────────────────────────────┘
+                            │ HTTPS / WSS (Realtime)
+┌───────────────────────────▼─────────────────────────────┐
+│                    SUPABASE (BaaS)                       │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌────────┐  │
+│  │ PostgREST│  │   Auth   │  │ Realtime │  │Storage │  │
+│  │  (REST)  │  │  (JWT)   │  │ (WS/PG)  │  │(Files) │  │
+│  └──────────┘  └──────────┘  └──────────┘  └────────┘  │
+│  ┌─────────────────────────────────────────────────┐    │
+│  │          PostgreSQL + Row Level Security         │    │
+│  └─────────────────────────────────────────────────┘    │
+│  ┌─────────────────────────────────────────────────┐    │
+│  │              Edge Functions (Deno)               │    │
+│  │  (lógica de negocio compleja, webhooks, emails) │    │
+│  └─────────────────────────────────────────────────┘    │
+└─────────────────────────────────────────────────────────┘
+```
+
+**Decisión clave:** No hay backend propio. Supabase cubre Auth, DB, Storage y Realtime. La lógica de negocio compleja (ej: cálculo de presupuestos, notificaciones, integraciones externas) vive en **Edge Functions** para mantener el cliente liviano y la lógica auditable.
+
+---
+
+## 3. Estructura de Carpetas
+
+```
+ecoflow/
+├── public/
+├── src/
+│   ├── app/                        # Punto de entrada y configuración global
+│   │   ├── App.tsx
+│   │   ├── Router.tsx              # Definición centralizada de rutas
+│   │   ├── Providers.tsx           # QueryClient, Auth, Theme providers
+│   │   └── main.tsx
+│   │
+│   ├── features/                   # Dominios de negocio (núcleo de FSD)
+│   │   ├── auth/
+│   │   │   ├── components/         # LoginForm, ProtectedRoute
+│   │   │   ├── hooks/              # useAuth, useSession
+│   │   │   ├── services/           # authService.ts
+│   │   │   └── types/              # auth.types.ts
+│   │   │
+│   │   ├── projects/               # Gestión de proyectos solares
+│   │   │   ├── components/
+│   │   │   │   ├── ProjectCard/
+│   │   │   │   ├── ProjectForm/
+│   │   │   │   └── ProjectStatusBadge/
+│   │   │   ├── hooks/
+│   │   │   │   ├── useProjects.ts
+│   │   │   │   ├── useProjectById.ts
+│   │   │   │   └── useProjectMutations.ts
+│   │   │   ├── services/
+│   │   │   │   └── projectsService.ts
+│   │   │   └── types/
+│   │   │       └── project.types.ts
+│   │   │
+│   │   ├── installations/          # Seguimiento de instalaciones
+│   │   ├── clients/                # CRM básico de clientes
+│   │   ├── budget/                 # Gestión de presupuestos
+│   │   ├── documents/              # Gestión documental (Storage)
+│   │   └── team/                   # Gestión de equipos/técnicos
+│   │
+│   ├── pages/                      # Composición de features en rutas
+│   │   ├── DashboardPage.tsx
+│   │   ├── ProjectsPage.tsx
+│   │   ├── ProjectDetailPage.tsx
+│   │   ├── InstallationsPage.tsx
+│   │   └── ...
+│   │
+│   ├── shared/                     # Código verdaderamente compartido
+│   │   ├── components/             # UI genérica sin lógica de dominio
+│   │   │   ├── DataTable/
+│   │   │   ├── FormField/
+│   │   │   ├── LoadingSpinner/
+│   │   │   ├── ErrorBoundary/
+│   │   │   └── EmptyState/
+│   │   ├── hooks/
+│   │   │   ├── useDebounce.ts
+│   │   │   ├── usePagination.ts
+│   │   │   └── useLocalStorage.ts
+│   │   └── utils/
+│   │       ├── formatters.ts       # Fechas, monedas, unidades
+│   │       └── validators.ts       # Zod schemas compartidos
+│   │
+│   ├── lib/                        # Configuración de librerías externas
+│   │   ├── supabase/
+│   │   │   ├── client.ts           # createClient singleton
+│   │   │   └── middleware.ts       # Interceptores, refresh token
+│   │   ├── query/
+│   │   │   ├── queryClient.ts      # TanStack Query config
+│   │   │   └── queryKeys.ts        # Query key factory centralizado
+│   │   └── zod/
+│   │       └── schemas.ts          # Schemas de validación base
+│   │
+│   └── types/                      # Tipos globales y generados
+│       ├── supabase.types.ts       # AUTO-GENERADO por Supabase CLI
+│       ├── database.types.ts       # Re-exports tipados y helpers
+│       └── global.d.ts             # Tipos de ambiente
+│
+├── supabase/
+│   ├── migrations/                 # SQL versionado
+│   ├── functions/                  # Edge Functions
+│   │   ├── calculate-budget/
+│   │   ├── send-notification/
+│   │   └── generate-report/
+│   └── seed.sql
+│
+├── .env.local
+├── vite.config.ts
+├── tsconfig.json
+└── tailwind.config.ts
+```
+
+**Regla de dependencias entre capas:**
+```
+pages → features → shared → lib → types
+```
+Las features NO se importan entre sí directamente. Si dos features comparten lógica, sube al nivel `shared`. Si es orquestación de múltiples features, sube a `pages`.
+
+---
+
+## 4. Flujo de Datos Frontend–Backend
+
+```
+Usuario
+  │
+  ▼
+Page Component
+  │ (invoca hook)
+  ▼
+Custom Hook (useProjects)
+  │ usa TanStack Query
+  │ queryKey: ['projects', filters]
+  ▼
+Service Function (projectsService.getAll)
+  │ construye query Supabase
+  ▼
+Supabase Client (PostgREST)
+  │ HTTPS → PostgreSQL + RLS
+  ▼
+Respuesta raw tipada con Database['public']['Tables']
+  │
+  ▼
+Transformación en Service (DB type → Domain type)
+  │
+  ▼
+TanStack Query Cache
+  │ (invalidación selectiva por queryKey)
+  ▼
+Hook expone { data, isLoading, error, refetch }
+  │
+  ▼
+Component renderiza estado
+```
+
+**Decisión clave — TanStack Query como capa de estado servidor:**
+El estado del servidor (datos de Supabase) **nunca** vive en Context o Zustand. TanStack Query gestiona caché, revalidación, optimistic updates y sincronización. El estado del cliente (UI state: modales abiertos, filtros locales, steps de wizard) vive en `useState`/`useReducer` local o Context liviano.
+
+**Realtime:**
+Para entidades que requieren actualizaciones en tiempo real (estado de instalación, chat de proyecto), el hook correspondiente combina TanStack Query con un `supabase.channel()`. Cuando llega un evento Realtime, se invalida el queryKey relevante, re-fetching automático.
+
+---
+
+## 5. Modelo de Autenticación
+
+**Mecanismo:** Supabase Auth con JWT + Refresh Token (httpOnly cookies en producción).
+
+**Roles definidos en la plataforma:**
+
+| Rol | Descripción |
+|---|---|
+| `admin` | Acceso total, configuración del sistema |
+| `project_manager` | CRUD de proyectos y clientes |
+| `technician` | Solo proyectos asignados, lectura |
+| `viewer` | Dashboard y reportes, solo lectura |
+
+**Implementación de roles:**
+Los roles se almacenan en una tabla `profiles` vinculada a `auth.users`. RLS en PostgreSQL filtra datos según el `auth.uid()` y el rol del JWT claims (custom claims via Hook de Auth).
+
+**Flujo de autenticación:**
+```
+Login → Supabase Auth → JWT con custom claims (role)
+  → Supabase client adjunta token en cada request
+  → RLS policies evalúan auth.jwt() -> role
+  → PostgREST retorna solo filas permitidas
+```
+
+**En el frontend:**
+- `useAuth` hook expone `user`, `role`, `isLoading`, `signIn`, `signOut`
+- `ProtectedRoute` wrappea rutas con verificación de rol
+- Los permisos de UI (mostrar/ocultar botones) se derivan del rol, nunca son la única barrera de seguridad (RLS es la barrera real)
+
+---
+
+## 6. Diseño Modular de Componentes
+
+**Tres niveles de componentes:**
+
+**Nivel 1 — Primitivos (Shadcn/UI + extensiones):**
+Componentes atómicos: `Button`, `Input`, `Select`, `Badge`, `Dialog`. Se usan directamente desde `shadcn/ui`. Si se necesita personalización recurrente, se crea un wrapper en `shared/components/` con props específicas de EcoFlow.
+
+**Nivel 2 — Componentes de dominio (en `features/`):**
+Tienen conocimiento del dominio de negocio. Reciben datos ya procesados por el hook padre. Ejemplos: `ProjectStatusBadge`, `InstallationTimeline`, `BudgetSummaryCard`. **No** llaman hooks de datos internamente (excepto mutaciones propias).
+
+**Nivel 3 — Componentes de página (en `pages/`):**
+Orquestan features, manejan layout, pasan datos hacia abajo. Son el único lugar donde se combinan múltiples features.
+
+**Patrón preferido — Compound Components:**
+Para UI compleja como formularios multi-step o tablas con filtros avanzados, se usa el patrón Compound Component con Context interno, evitando prop drilling y manteniendo la API del componente limpia.
+
+**Separación Container/Presentational adaptada:**
+El hook es el "container" (lógica + datos), el componente es "presentational" (solo render). Esta separación facilita testing: los hooks se testean con `@testing-library/react-hooks`, los componentes con mocks simples.
+
+---
+
+## 7. Estrategia de Tipado TypeScript
+
+**Fuente de verdad — Tipos generados por Supabase CLI:**
+```
+supabase gen types typescript --linked > src/types/supabase.types.ts
+```
+Este archivo es **solo lectura** y **nunca se edita manualmente**. Se regenera en CI/CD cuando cambian las migraciones.
+
+**Capa de Domain Types:**
+Los tipos de Supabase son verbosos y acoplados a la DB. En cada feature se definen tipos de dominio más limpios:
+
+```
+DB Type (supabase.types.ts)
+  → Service transforma
+  → Domain Type (project.types.ts)
+  → Component consume
+```
+
+Esto desacopla el frontend del esquema exacto de la DB. Si cambia una columna, solo se actualiza el service y el domain type, no todos los componentes.
+
+**Helpers de tipos globales:**
+En `types/database.types.ts` se crean helpers reutilizables:
+- `Tables<T>` para acceder al tipo de una tabla
+- `TablesInsert<T>` para tipos de inserción
+- `TablesUpdate<T>` para tipos de actualización parcial
+- `Enums<T>` para los enums de PostgreSQL
+
+**Zod para validación en runtime:**
+Los formularios y los datos que llegan de Edge Functions (no tipados nativamente por PostgREST) se validan con schemas Zod. Los tipos de TypeScript se **infieren** de los schemas Zod, nunca se duplican.
+
+**Configuración tsconfig:**
+`strict: true` con `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`. Cero `any` en código de producción; si es necesario, se usa `unknown` con narrowing explícito.
+
+---
+
+## 8. Separación de Responsabilidades
+
+| Capa | Responsabilidad | No debe hacer |
+|---|---|---|
+| `pages/` | Composición de layout, orquestación de features, gestión de params de URL | Lógica de negocio, llamadas directas a Supabase |
+| `features/*/components/` | Render de UI de dominio, manejar eventos locales | Llamadas a servicios directamente (excepto mutations) |
+| `features/*/hooks/` | Coordinar services con TanStack Query, exponer estado y acciones | Lógica de render, JSX |
+| `features/*/services/` | Construir queries Supabase, transformar DB→Domain types, llamar Edge Functions | Estado local, efectos secundarios de UI |
+| `shared/components/` | UI genérica, reutilizable, sin conocimiento de dominio | Importar de `features/` |
+| `lib/` | Configuración y setup de herramientas externas | Lógica de negocio |
+| `types/` | Definiciones de tipos, schemas Zod | Lógica ejecutable |
+
+---
+
+## 9. Manejo de Estados de Carga y Error
+
+**Estrategia en tres niveles:**
+
+**Nivel 1 — Query level (TanStack Query):**
+Cada hook expone `isLoading`, `isFetching`, `isError`, `error`. Los componentes consumen estos estados para mostrar skeletons, spinners de revalidación o mensajes de error inline.
+
+**Nivel 2 — Error Boundaries (React):**
+`ErrorBoundary` wrappea secciones críticas de la UI. Captura errores de render inesperados y muestra un fallback con opción de retry. Se implementan a nivel de feature (un ErrorBoundary por sección principal del layout), no a nivel global.
+
+**Nivel 3 — Error global de red:**
+En el `queryClient.ts` se configura un `onError` global para errores 401 (redirect a login), 503 (banner de servicio no disponible) y errores de rate limit.
+
+**Estados de carga — convención visual:**
+- Carga inicial: Skeleton loaders que replican la forma del contenido (no spinners genéricos)
+- Revalidación en background: Indicador sutil (isFetching) sin bloquear la UI
+- Mutaciones: Estado `isPending` en el botón de acción, deshabilitado durante la operación
+- Error recuperable: Toast notification + datos cacheados visibles
+- Error fatal: ErrorBoundary con UI de fallback y botón de retry
+
+---
+
+## 10. Estrategia de Escalabilidad Futura
+
+**Escalabilidad de features:**
+El modelo FSD permite añadir un nuevo dominio (ej: `inventory/`, `reports/`, `billing/`) sin tocar código existente. Cada feature es autocontenida.
+
+**Escalabilidad de equipo:**
+Las reglas de dependencia entre capas se pueden enforcer con **ESLint + eslint-plugin-boundaries**, previniendo que features se importen entre sí o que `shared/` importe de `features/`.
+
+**Escalabilidad de datos:**
+- Paginación desde el inicio con cursor-based pagination (no offset) para tablas grandes
+- Supabase permite escalar PostgreSQL verticalmente y añadir réplicas de lectura sin cambios en el cliente
+- Edge Functions escalan automáticamente; la lógica compleja migra allí gradualmente
+
+**Escalabilidad hacia micro-frontends:**
+La separación por features permite extraer dominios a módulos independientes con Module Federation (Vite) si el equipo crece significativamente. No se implementa desde el inicio, pero la arquitectura no lo impide.
+
+**Migración futura de BaaS:**
+Los services actúan como capa anti-corrupción. Si en el futuro se reemplaza Supabase por una API propia, solo cambian los `*Service.ts` de cada feature. Los hooks, componentes y páginas no se tocan.
+
+**Observabilidad:**
+Integración futura de Sentry en el `ErrorBoundary` y en el `onError` del queryClient. Los Edge Functions emiten logs estructurados a Supabase Logs desde el día 1.
+
+---
+
+## Resumen de Decisiones Técnicas Clave
+
+| Decisión | Alternativa descartada | Justificación |
+|---|---|---|
+| TanStack Query para estado servidor | Redux, Zustand global | Caching, revalidación y sincronización out-of-the-box; menos boilerplate |
+| Feature-Sliced Design | Atomic Design puro | Mejor alineación con dominios de negocio; escala mejor con el equipo |
+| Tipos generados de Supabase + Domain Types | Tipos manuales | Single source of truth; desacoplamiento DB-frontend |
+| Zod para validación runtime | Yup, validación manual | Inferencia de tipos TS nativa; ecosistema moderno |
+| RLS como única barrera de seguridad real | Seguridad solo en frontend | El frontend es siempre un cliente no confiable |
+| Edge Functions para lógica compleja | Lógica en cliente | Auditabilidad, seguridad, reutilización por otros clientes futuros |
