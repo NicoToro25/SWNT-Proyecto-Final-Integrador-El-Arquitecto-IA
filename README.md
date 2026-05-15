@@ -6,11 +6,11 @@
 
 ## Entregables
 
-1. [Código fuente](/src)
+1. [Código fuente](EcoFlow/src)
 
-2. 
+2. [Arquitecura General](/docs/ARQUITECTURA-GENERAL-md)
 
-3. 
+3. [Video Demo](/images/demo.mp4)
 
 ---
 
